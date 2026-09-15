@@ -29,8 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git ccache automake flex lzop bison gperf build-essential zip curl \
-            libssl-dev bc python3 libncurses5-dev libncurses5 libelf-dev libtinfo5 \
-            unzip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+            libssl-dev bc python3 libncurses5-dev libncurses5 libelf-dev libtinfo5 unzip
 
       - name: Restore Cached Toolchains
         id: cache-toolchains
@@ -66,27 +65,20 @@ jobs:
         run: |
           export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH
 
-          # 定义与官方构建完全对齐的 LLVM 工具链参数
-          MAKE_PARAMS=(
-            ARCH=arm64
-            SUBARCH=arm64
-            CC=clang
-            LD=ld.lld
-            AR=llvm-ar
-            NM=llvm-nm
-            OBJCOPY=llvm-objcopy
-            OBJDUMP=llvm-objdump
-            STRIP=llvm-strip
-            CLANG_TRIPLE=aarch64-linux-gnu-
-            CROSS_COMPILE=aarch64-linux-gnu-
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          )
+          # 1. 载入原始 defconfig（对齐 TARGET_KERNEL_NO_GCC，全程采用 LLVM=1）
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 ${{ github.event.inputs.DEFCONFIG }}
 
-          # 生成 defconfig（必须带上工具链参数，使 Kconfig 正确判定 Clang 21 与 LLD 特性）
-          make O=out "${MAKE_PARAMS[@]}" ${{ github.event.inputs.DEFCONFIG }}
+          # 2. 注入 ReSukiSU 配置
+          scripts/config --file out/.config \
+            -e CONFIG_KSU \
+            -e CONFIG_KSU_MANUAL_HOOK \
+            -e CONFIG_OVERLAY_FS
 
-          # 编译内核
-          make -j$(nproc --all) O=out "${MAKE_PARAMS[@]}"
+          # 3. 运行 olddefconfig 自动补全并对齐所有依赖宏，防止交互阻塞
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+
+          # 4. 纯 LLVM 全速编译
+          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
 
       - name: Package with AnyKernel3
         run: |
@@ -129,7 +121,12 @@ jobs:
           write_boot;
           EOF
 
-          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          # 根据 BoardConfig.mk 对齐，使用 Image.gz（Header v2 会独立提取 dtb，不使用 Image.gz-dtb）
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
+            cp out/arch/arm64/boot/Image.gz AnyKernel3/Image.gz
+          else
+            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
+          fi
 
           cd AnyKernel3
           zip -r9 ../AnyKernel3-Pure-ReSukiSU-earth.zip * -x .git README.md *placeholder
