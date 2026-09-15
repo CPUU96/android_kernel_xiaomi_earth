@@ -69,10 +69,10 @@ jobs:
           sed -i 's/res="\$res\${scm:++}"//g' scripts/setlocalversion
           sed -i 's/echo "+"/return/g' scripts/setlocalversion
 
-          export KBUILD_BUILD_USER="android-build"
-          export KBUILD_BUILD_HOST="lineageos"
-          export SOURCE_DATE_EPOCH=1789264794
-          export KBUILD_BUILD_TIMESTAMP="Sun Sep 13 01:59:54 UTC 2026"
+          export KBUILD_BUILD_USER="root"
+          export KBUILD_BUILD_HOST="7e8419c714bd"
+          export SOURCE_DATE_EPOCH=1789269474
+          export KBUILD_BUILD_TIMESTAMP="Sun Sep 13 03:17:54 UTC 2026"
 
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 ${{ github.event.inputs.DEFCONFIG }}
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
