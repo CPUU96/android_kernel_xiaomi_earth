@@ -1,0 +1,135 @@
+name: Build Pure ReSukiSU Kernel (Manual Hook)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_BRANCH:
+        description: 'Kernel branch to build'
+        required: true
+        default: 'lineage-23.2'
+      DEFCONFIG:
+        description: 'Defconfig name'
+        required: true
+        default: 'earth_defconfig'
+
+jobs:
+  build:
+    name: Build Pure Kernel & Package AnyKernel3
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.KERNEL_BRANCH }}
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git ccache automake flex lzop bison gperf build-essential zip curl \
+            libssl-dev bc python3 libncurses5-dev libncurses5 libelf-dev libtinfo5 \
+            unzip
+
+      - name: Restore Cached Toolchains
+        id: cache-toolchains
+        uses: actions/cache/restore@v6
+        with:
+          path: toolchains
+          key: toolchains-aosp-clang-r416183b-gcc4.9-v2
+
+      - name: Setup Official Toolchains
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p toolchains/clang
+          cd toolchains
+          curl -f -L -S --retry 5 --retry-delay 5 \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz" \
+            -o clang.tar.gz
+          tar -xzf clang.tar.gz -C clang
+          rm -f clang.tar.gz
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git -b android-10.0.0_r47 gcc-arm64
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git -b android-10.0.0_r47 gcc-arm32
+
+      - name: Save Toolchains to Cache
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: toolchains
+          key: toolchains-aosp-clang-r416183b-gcc4.9-v2
+
+      - name: Integrate ReSukiSU
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+
+      - name: Build Kernel
+        run: |
+          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc-arm64/bin:$GITHUB_WORKSPACE/toolchains/gcc-arm32/bin:$PATH
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+
+          make O=out CC=clang ${{ github.event.inputs.DEFCONFIG }}
+
+          make -j$(nproc --all) O=out \
+            CC=clang \
+            CROSS_COMPILE=$CROSS_COMPILE \
+            CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 \
+            CLANG_TRIPLE=$CLANG_TRIPLE
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+
+          cat << 'EOF' > AnyKernel3/anykernel.sh
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=Pure ReSukiSU Kernel for Redmi 12C (earth)
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=earth
+          device.name2=
+          device.name3=
+          device.name4=
+          device.name5=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          }
+
+          BLOCK=/dev/block/by-name/boot;
+          IS_SLOT_DEVICE=auto;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          . tools/ak3-core.sh;
+
+          dump_boot;
+          write_boot;
+          EOF
+
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+
+          cd AnyKernel3
+          zip -r9 ../AnyKernel3-Pure-ReSukiSU-earth.zip * -x .git README.md *placeholder
+          cd ..
+
+      - name: Upload AnyKernel3 Package
+        uses: actions/upload-artifact@v7
+        with:
+          name: AnyKernel3-Pure-ReSukiSU-earth
+          path: AnyKernel3-Pure-ReSukiSU-earth.zip
+          archive: false
