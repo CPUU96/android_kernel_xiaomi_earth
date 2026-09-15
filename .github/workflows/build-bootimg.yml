@@ -30,34 +30,33 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             git ccache automake flex lzop bison gperf build-essential zip curl \
             libssl-dev bc python3 libncurses5-dev libncurses5 libelf-dev libtinfo5 \
-            unzip
+            unzip gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
       - name: Restore Cached Toolchains
         id: cache-toolchains
         uses: actions/cache/restore@v6
         with:
           path: toolchains
-          key: toolchains-aosp-clang-r416183b-gcc4.9-v2
+          key: toolchains-aosp-clang-r563880c-v1
 
-      - name: Setup Official Toolchains
+      - name: Setup Official AOSP Clang-r563880c
         if: steps.cache-toolchains.outputs.cache-hit != 'true'
         run: |
           mkdir -p toolchains/clang
           cd toolchains
+          echo "Downloading official AOSP Clang r563880c (Clang 21.0.0)..."
           curl -f -L -S --retry 5 --retry-delay 5 \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz" \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r563880c.tar.gz" \
             -o clang.tar.gz
           tar -xzf clang.tar.gz -C clang
           rm -f clang.tar.gz
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9.git -b android-10.0.0_r47 gcc-arm64
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9.git -b android-10.0.0_r47 gcc-arm32
 
       - name: Save Toolchains to Cache
         if: steps.cache-toolchains.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: toolchains
-          key: toolchains-aosp-clang-r416183b-gcc4.9-v2
+          key: toolchains-aosp-clang-r563880c-v1
 
       - name: Integrate ReSukiSU
         run: |
@@ -65,20 +64,29 @@ jobs:
 
       - name: Build Kernel
         run: |
-          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc-arm64/bin:$GITHUB_WORKSPACE/toolchains/gcc-arm32/bin:$PATH
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-android-
-          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH
 
-          make O=out CC=clang ${{ github.event.inputs.DEFCONFIG }}
+          # 定义与官方构建完全对齐的 LLVM 工具链参数
+          MAKE_PARAMS=(
+            ARCH=arm64
+            SUBARCH=arm64
+            CC=clang
+            LD=ld.lld
+            AR=llvm-ar
+            NM=llvm-nm
+            OBJCOPY=llvm-objcopy
+            OBJDUMP=llvm-objdump
+            STRIP=llvm-strip
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          )
 
-          make -j$(nproc --all) O=out \
-            CC=clang \
-            CROSS_COMPILE=$CROSS_COMPILE \
-            CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 \
-            CLANG_TRIPLE=$CLANG_TRIPLE
+          # 生成 defconfig（必须带上工具链参数，使 Kconfig 正确判定 Clang 21 与 LLD 特性）
+          make O=out "${MAKE_PARAMS[@]}" ${{ github.event.inputs.DEFCONFIG }}
+
+          # 编译内核
+          make -j$(nproc --all) O=out "${MAKE_PARAMS[@]}"
 
       - name: Package with AnyKernel3
         run: |
