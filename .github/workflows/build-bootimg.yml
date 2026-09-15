@@ -65,19 +65,10 @@ jobs:
         run: |
           export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH
 
-          # 1. 载入原始 defconfig（对齐 TARGET_KERNEL_NO_GCC，全程采用 LLVM=1）
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 ${{ github.event.inputs.DEFCONFIG }}
 
-          # 2. 注入 ReSukiSU 配置
-          scripts/config --file out/.config \
-            -e CONFIG_KSU \
-            -e CONFIG_KSU_MANUAL_HOOK \
-            -e CONFIG_OVERLAY_FS
-
-          # 3. 运行 olddefconfig 自动补全并对齐所有依赖宏，防止交互阻塞
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
 
-          # 4. 纯 LLVM 全速编译
           make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
 
       - name: Package with AnyKernel3
@@ -121,12 +112,7 @@ jobs:
           write_boot;
           EOF
 
-          # 根据 BoardConfig.mk 对齐，使用 Image.gz（Header v2 会独立提取 dtb，不使用 Image.gz-dtb）
-          if [ -f out/arch/arm64/boot/Image.gz ]; then
-            cp out/arch/arm64/boot/Image.gz AnyKernel3/Image.gz
-          else
-            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/Image.gz-dtb
-          fi
+          cp out/arch/arm64/boot/Image.gz AnyKernel3/
 
           cd AnyKernel3
           zip -r9 ../AnyKernel3-Pure-ReSukiSU-earth.zip * -x .git README.md *placeholder
