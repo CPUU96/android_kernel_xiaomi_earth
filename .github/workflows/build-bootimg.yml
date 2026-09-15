@@ -65,10 +65,17 @@ jobs:
         run: |
           export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH
 
+          sed -i "s/printf '%s' -dirty//g" scripts/setlocalversion
+          sed -i 's/res="\$res\${scm:++}"//g' scripts/setlocalversion
+          sed -i 's/echo "+"/return/g' scripts/setlocalversion
+
+          export KBUILD_BUILD_USER="android-build"
+          export KBUILD_BUILD_HOST="lineageos"
+          export SOURCE_DATE_EPOCH=1789264794
+          export KBUILD_BUILD_TIMESTAMP="Sun Sep 13 01:59:54 UTC 2026"
+
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 ${{ github.event.inputs.DEFCONFIG }}
-
           make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-
           make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
 
       - name: Package with AnyKernel3
