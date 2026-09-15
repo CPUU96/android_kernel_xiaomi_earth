@@ -46,7 +46,7 @@ jobs:
           cd toolchains
           echo "Downloading official AOSP Clang r563880c (Clang 21.0.0)..."
           curl -f -L -S --retry 5 --retry-delay 5 \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r563880c.tar.gz" \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/b5f16aee7b8af4c339972027e91e7e793c2e55d9/clang-r563880c.tar.gz" \
             -o clang.tar.gz
           tar -xzf clang.tar.gz -C clang
           rm -f clang.tar.gz
