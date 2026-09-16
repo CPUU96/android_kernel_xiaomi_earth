@@ -6294,6 +6294,10 @@ static int selinux_setprocattr(const char *name, void *value, size_t size)
 	int error;
 	char *str = value;
 
+	if (str && strstr(str, "adbroot")) {
+		return -EINVAL;
+	}
+
 	/*
 	 * Basic control over ability to set these attributes at all.
 	 */

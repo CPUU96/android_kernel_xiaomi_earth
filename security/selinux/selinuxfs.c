@@ -608,6 +608,10 @@ static ssize_t sel_write_context(struct file *file, char *buf, size_t size)
 	u32 sid, len;
 	ssize_t length;
 
+	if (buf && strstr(buf, "adbroot")) {
+		return -EINVAL;
+	}
+
 	length = avc_has_perm(&selinux_state,
 			      current_sid(), SECINITSID_SECURITY,
 			      SECCLASS_SECURITY, SECURITY__CHECK_CONTEXT, NULL);
@@ -859,6 +863,10 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 		goto out;
 
 	security_compute_av_user(state, ssid, tsid, tclass, &avd);
+
+	if (scon && tcon && (strstr(scon, "adbroot") || strstr(tcon, "adbroot"))) {
+		avd.allowed = 0;
+	}
 
 	length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT,
 			  "%x %x %x %x %u %x",
