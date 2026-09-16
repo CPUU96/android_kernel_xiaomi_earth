@@ -850,13 +850,6 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 	if (sscanf(buf, "%s %s %hu", scon, tcon, &tclass) != 3)
 		goto out;
 
-	if (current_uid().val >= 10000) {
-		if (strstr(scon, "adbroot") || strstr(tcon, "adbroot")) {
-			length = -EINVAL;
-			goto out;
-		}
-	}
-
 	length = security_context_str_to_sid(state, scon, &ssid, GFP_KERNEL);
 	if (length)
 		goto out;
