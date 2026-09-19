@@ -82,7 +82,7 @@ jobs:
 
           # 下面解决 fsck_untrusted sys_admin 脏策略探针
           old_target = '    avd.seqno = 1;\n    length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%x %x %x %x %u %x", avd.allowed'
-          new_target = '    avd.seqno = 1;\n    if (unlikely(scon && tcon && strstr(scon, "fsck_untrusted") && strstr(tcon, "fsck_untrusted")))\n        avd.allowed &= ~0x00200000;\n    length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%x %x %x %x %u %x", avd.allowed'
+          new_target = '    avd.seqno = 1;\n    if (unlikely(scon && tcon && strstr(scon, "fsck_untrusted") && strstr(tcon, "fsck_untrusted")))\n        avd.allowed &= ~0x00200000;\n    if (unlikely(scon && tcon && strstr(scon, ":shell:") && strstr(tcon, ":su:")))\n        avd.allowed = 0;\n    length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%x %x %x %x %u %x", avd.allowed'
           content = content.replace(old_target, new_target)
 
           with open(target_file, "w", encoding="utf-8") as f:
