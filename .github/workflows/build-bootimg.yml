@@ -1,0 +1,185 @@
+name: Build Pure ReSukiSU Kernel (Manual Hook)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_BRANCH:
+        description: 'Kernel branch to build'
+        required: true
+        default: 'lineage-23.2'
+      DEFCONFIG:
+        description: 'Defconfig name'
+        required: true
+        default: 'earth_defconfig'
+
+jobs:
+  build:
+    name: Build Pure Kernel & Package AnyKernel3
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.KERNEL_BRANCH }}
+          fetch-depth: 1
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git ccache automake flex lzop bison gperf build-essential zip curl \
+            libssl-dev bc python3 libncurses5-dev libncurses5 libelf-dev libtinfo5 unzip
+
+      - name: Restore Cached Toolchains
+        id: cache-toolchains
+        uses: actions/cache/restore@v6
+        with:
+          path: toolchains
+          key: toolchains-aosp-clang-r563880c-v1
+
+      - name: Setup Official AOSP Clang-r563880c
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p toolchains/clang
+          cd toolchains
+          echo "Downloading official AOSP Clang r563880c (Clang 21.0.0)..."
+          curl -f -L -S --retry 5 --retry-delay 5 \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/b5f16aee7b8af4c339972027e91e7e793c2e55d9/clang-r563880c.tar.gz" \
+            -o clang.tar.gz
+          tar -xzf clang.tar.gz -C clang
+          rm -f clang.tar.gz
+
+      - name: Save Toolchains to Cache
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: toolchains
+          key: toolchains-aosp-clang-r563880c-v1
+
+      - name: Integrate ReSukiSU
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+
+      - name: Patch ReSukiSU selinux_hide for adbroot
+        run: |
+          python3 - << 'EOF'
+          target_file = "KernelSU/kernel/feature/selinux_hide.c"
+
+          with open(target_file, "r", encoding="utf-8") as f:
+              content = f.read()
+
+          # 下方几处更改都是为了解决LineageOS原生的adb->adbroot会触发检测的问题，可能因上游ReSukiSU的更新而失效，需要同步更新。在开启ReSukiSU的隐藏SElinux功能后会覆盖掉security/selinux/hooks.c和security/selinux/selinuxfs.c同目的的修改。
+          old_context_block = """static ssize_t my_write_context(struct file *file, char *buf, size_t size)
+          {
+              // apply to all app uids
+              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
+                  return orig_context_write(file, buf, size);
+              }"""
+
+          new_context_block = """static ssize_t my_write_context(struct file *file, char *buf, size_t size)
+          {
+              // apply to all app uids
+              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
+                  return orig_context_write(file, buf, size);
+              }
+              if (strnstr(buf, "adbroot", size)) {
+                  return -EINVAL;
+              }"""
+
+          old_access_block = """static ssize_t my_write_access(struct file *file, char *buf, size_t size)
+          {
+              // apply to all app uids
+              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
+                  return orig_access_write(file, buf, size);
+              }"""
+
+          new_access_block = """static ssize_t my_write_access(struct file *file, char *buf, size_t size)
+          {
+              // apply to all app uids
+              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
+                  return orig_access_write(file, buf, size);
+              }
+              if (strnstr(buf, "adbroot", size)) {
+                  return -EINVAL;
+              }"""
+
+          content = content.replace("    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_context_write(file, buf, size);\n    }", 
+                                    "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_context_write(file, buf, size);\n    }\n    if (strnstr(buf, \"adbroot\", size)) {\n        return -EINVAL;\n    }")
+
+          content = content.replace("    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_access_write(file, buf, size);\n    }", 
+                                    "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_access_write(file, buf, size);\n    }\n    if (strnstr(buf, \"adbroot\", size)) {\n        return -EINVAL;\n    }")
+
+          with open(target_file, "w", encoding="utf-8") as f:
+              f.write(content)
+
+          print("[+] Successfully patched selinux_hide.c for adbroot bypass!")
+          EOF
+
+      - name: Build Kernel
+        run: |
+          export PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH
+
+          export LOCALVERSION="-gd7851c271883"
+          export KBUILD_BUILD_USER="root"
+          export KBUILD_BUILD_HOST="7e8419c714bd"
+          export SOURCE_DATE_EPOCH=1789269474
+          export KBUILD_BUILD_TIMESTAMP="Sun Sep 13 03:17:54 UTC 2026"
+
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 ${{ github.event.inputs.DEFCONFIG }}
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+
+          cat << 'EOF' > AnyKernel3/anykernel.sh
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          properties() { '
+          kernel.string=Pure ReSukiSU Kernel for Redmi 12C (earth)
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=earth
+          device.name2=
+          device.name3=
+          device.name4=
+          device.name5=
+          supported.versions=
+          supported.patchlevels=
+          supported.vendorpatchlevels=
+          '; }
+
+          boot_attributes() {
+          set_perm_recursive 0 0 755 644 $RAMDISK/*;
+          set_perm_recursive 0 0 750 750 $RAMDISK/init* $RAMDISK/sbin;
+          }
+
+          BLOCK=/dev/block/by-name/boot;
+          IS_SLOT_DEVICE=auto;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          . tools/ak3-core.sh;
+
+          dump_boot;
+          write_boot;
+          EOF
+
+          cp out/arch/arm64/boot/Image.gz AnyKernel3/
+
+          cd AnyKernel3
+          zip -r9 ../AnyKernel3-Pure-ReSukiSU-earth.zip * -x .git README.md *placeholder
+          cd ..
+
+      - name: Upload AnyKernel3 Package
+        uses: actions/upload-artifact@v7
+        with:
+          name: AnyKernel3-Pure-ReSukiSU-earth
+          path: AnyKernel3-Pure-ReSukiSU-earth.zip
+          archive: false

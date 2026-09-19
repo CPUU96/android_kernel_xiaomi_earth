@@ -265,7 +265,7 @@ static int sel_mmap_handle_status(struct file *filp,
 			       size, vma->vm_page_prot);
 }
 
-static const struct file_operations sel_handle_status_ops = {
+const struct file_operations sel_handle_status_ops = {
 	.open		= sel_open_handle_status,
 	.read		= sel_read_handle_status,
 	.mmap		= sel_mmap_handle_status,
@@ -614,6 +614,13 @@ static ssize_t sel_write_context(struct file *file, char *buf, size_t size)
 	if (length)
 		goto out;
 
+
+	// 这里与hooks.c中的更改一样是解决LineageOS原生的adb->adbroot的问题，同目的的更改本文件中还有一处。会被ResukiSU的隐藏SElinux功能覆盖掉。
+	if (unlikely(size >= 7 && current_uid().val >= 10000 && strnstr(buf, "adbroot", size))) {
+		length = -EINVAL;
+		goto out;
+	}
+
 	length = security_context_to_sid(state, buf, size, &sid, GFP_KERNEL);
 	if (length)
 		goto out;
@@ -777,7 +784,7 @@ static ssize_t sel_write_relabel(struct file *file, char *buf, size_t size);
 static ssize_t sel_write_user(struct file *file, char *buf, size_t size);
 static ssize_t sel_write_member(struct file *file, char *buf, size_t size);
 
-static ssize_t (*const write_op[])(struct file *, char *, size_t) = {
+ssize_t (*const write_op[])(struct file *, char *, size_t) = {
 	[SEL_ACCESS] = sel_write_access,
 	[SEL_CREATE] = sel_write_create,
 	[SEL_RELABEL] = sel_write_relabel,
@@ -849,6 +856,13 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 	length = -EINVAL;
 	if (sscanf(buf, "%s %s %hu", scon, tcon, &tclass) != 3)
 		goto out;
+
+
+	// 这里与hooks.c中的更改一样是解决LineageOS原生的adb->adbroot的问题，同目的的更改本文件中还有一处。会被ResukiSU的隐藏SElinux功能覆盖掉。
+	if (unlikely(current_uid().val >= 10000 && (strstr(scon, "adbroot") || strstr(tcon, "adbroot")))) {
+		length = -EINVAL;
+		goto out;
+	}
 
 	length = security_context_str_to_sid(state, scon, &ssid, GFP_KERNEL);
 	if (length)

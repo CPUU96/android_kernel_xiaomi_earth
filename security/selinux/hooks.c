@@ -6294,6 +6294,12 @@ static int selinux_setprocattr(const char *name, void *value, size_t size)
 	int error;
 	char *str = value;
 
+	// 这里与selinuxfs.c中的更改一样是解决LineageOS原生的adb->adbroot的问题。会被ResukiSU的隐藏SElinux功能覆盖掉。
+	if (unlikely(name && !strcmp(name, "current") && current_uid().val >= 10000)) {
+		if (unlikely(str && size >= 7 && strnstr(str, "adbroot", size)))
+			return -EINVAL;
+	}
+
 	/*
 	 * Basic control over ability to set these attributes at all.
 	 */
