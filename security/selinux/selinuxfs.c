@@ -874,6 +874,10 @@ static ssize_t sel_write_access(struct file *file, char *buf, size_t size)
 
 	security_compute_av_user(state, ssid, tsid, tclass, &avd);
 
+	/* 拦截针对 fsck_untrusted 的 sys_admin 脏策略探针，同样与ResukiSU的隐藏SElinux功能冲突 */
+	if (scon && tcon && strstr(scon, "fsck_untrusted") && strstr(tcon, "fsck_untrusted"))
+		avd.allowed &= ~0x00200000;
+
 	length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT,
 			  "%x %x %x %x %u %x",
 			  avd.allowed, 0xffffffff,

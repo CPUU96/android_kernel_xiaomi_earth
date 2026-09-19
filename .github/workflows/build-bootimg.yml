@@ -61,7 +61,7 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
-      - name: Patch ReSukiSU selinux_hide for adbroot
+      - name: Patch ReSukiSU selinux_hide for adbroot and fsck_untrusted
         run: |
           python3 - << 'EOF'
           target_file = "KernelSU/kernel/feature/selinux_hide.c"
@@ -70,50 +70,37 @@ jobs:
               content = f.read()
 
           # 下方几处更改都是为了解决LineageOS原生的adb->adbroot会触发检测的问题，可能因上游ReSukiSU的更新而失效，需要同步更新。在开启ReSukiSU的隐藏SElinux功能后会覆盖掉security/selinux/hooks.c和security/selinux/selinuxfs.c同目的的修改。
-          old_context_block = """static ssize_t my_write_context(struct file *file, char *buf, size_t size)
-          {
-              // apply to all app uids
-              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
-                  return orig_context_write(file, buf, size);
-              }"""
+          content = content.replace(
+              "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_context_write(file, buf, size);\n    }", 
+              "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_context_write(file, buf, size);\n    }\n    if (strnstr(buf, \"adbroot\", size)) {\n        return -EINVAL;\n    }"
+          )
 
-          new_context_block = """static ssize_t my_write_context(struct file *file, char *buf, size_t size)
-          {
-              // apply to all app uids
-              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
-                  return orig_context_write(file, buf, size);
-              }
-              if (strnstr(buf, "adbroot", size)) {
-                  return -EINVAL;
-              }"""
+          content = content.replace(
+              "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_access_write(file, buf, size);\n    }", 
+              "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_access_write(file, buf, size);\n    }\n    if (strnstr(buf, \"adbroot\", size)) {\n        return -EINVAL;\n    }"
+          )
 
-          old_access_block = """static ssize_t my_write_access(struct file *file, char *buf, size_t size)
-          {
-              // apply to all app uids
-              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
-                  return orig_access_write(file, buf, size);
-              }"""
+          # 下面解决 fsck_untrusted sys_admin 脏策略
+          old_hide_scnprintf = """    // stock reads 1; a loader load_policy may have bumped the backup before we load
+    avd.seqno = 1;
+    length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%x %x %x %x %u %x", avd.allowed, 0xffffffff, avd.auditallow,
+                       avd.auditdeny, avd.seqno, avd.flags);"""
 
-          new_access_block = """static ssize_t my_write_access(struct file *file, char *buf, size_t size)
-          {
-              // apply to all app uids
-              if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
-                  return orig_access_write(file, buf, size);
-              }
-              if (strnstr(buf, "adbroot", size)) {
-                  return -EINVAL;
-              }"""
+          new_hide_scnprintf = """    // stock reads 1; a loader load_policy may have bumped the backup before we load
+    avd.seqno = 1;
 
-          content = content.replace("    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_context_write(file, buf, size);\n    }", 
-                                    "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_context_write(file, buf, size);\n    }\n    if (strnstr(buf, \"adbroot\", size)) {\n        return -EINVAL;\n    }")
+    if (unlikely(scon && tcon && strstr(scon, "fsck_untrusted") && strstr(tcon, "fsck_untrusted")))
+        avd.allowed &= ~0x00200000;
 
-          content = content.replace("    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_access_write(file, buf, size);\n    }", 
-                                    "    if (likely(ksu_get_uid_t(current_uid()) < 10000)) {\n        return orig_access_write(file, buf, size);\n    }\n    if (strnstr(buf, \"adbroot\", size)) {\n        return -EINVAL;\n    }")
+    length = scnprintf(buf, SIMPLE_TRANSACTION_LIMIT, "%x %x %x %x %u %x", avd.allowed, 0xffffffff, avd.auditallow,
+                       avd.auditdeny, avd.seqno, avd.flags);"""
+
+          content = content.replace(old_hide_scnprintf, new_hide_scnprintf)
 
           with open(target_file, "w", encoding="utf-8") as f:
               f.write(content)
 
-          print("[+] Successfully patched selinux_hide.c for adbroot bypass!")
+          print("[+] Successfully patched selinux_hide.c for adbroot & fsck_untrusted!")
           EOF
 
       - name: Build Kernel
